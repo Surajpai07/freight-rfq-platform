@@ -15,17 +15,10 @@ export default function VendorRFQDetails() {
   const [transitDays, setTransitDays] = useState('')
   const [alreadyBid, setAlreadyBid] = useState(false)
   const [message, setMessage] = useState('')
-  const [result, setResult] = useState<'WON' | 'LOST' | null>(null)
-  const [winningBid, setWinningBid] = useState<{
-  price: number
-  transit_days: number
-} | null>(null)
-
 
   useEffect(() => {
     async function loadRFQ() {
       try {
-        // wait until route param is ready
         if (!rfqId) return
 
         const { data: userData } = await supabase.auth.getUser()
@@ -34,7 +27,6 @@ export default function VendorRFQDetails() {
           return
         }
 
-        // role check
         const { data: profile } = await supabase
           .from('profiles')
           .select('role')
@@ -46,53 +38,42 @@ export default function VendorRFQDetails() {
           return
         }
 
-        // load RFQ
-        const { data: rfqData, error: rfqError } = await supabase
+        const { data: rfqData } = await supabase
           .from('rfqs')
           .select('*')
           .eq('id', rfqId)
           .single()
 
-        if (rfqError || !rfqData) {
-          router.push('/dashboard/vendor')
-          return
-        }
-
-        // allow BOTH LIVE and CLOSED RFQs
-        if (rfqData.status !== 'LIVE' && rfqData.status !== 'CLOSED') {
+        if (!rfqData || rfqData.status !== 'LIVE') {
           router.push('/dashboard/vendor')
           return
         }
 
         setRfq(rfqData)
 
-        // check existing bid
+        const { data: round } = await supabase
+          .from('rfq_rounds')
+          .select('*')
+          .eq('rfq_id', rfqId)
+          .eq('status', 'LIVE')
+          .single()
+
         const { data: existingBid } = await supabase
-            .from('bids')
-            .select('id, is_winner, price, transit_days')
-            .eq('rfq_id', rfqId)
-            .eq('vendor_id', userData.user.id)
-            .maybeSingle()
+          .from('bids')
+          .select('id')
+          .eq('rfq_id', rfqId)
+          .eq('round_id', round.id)
+          .eq('vendor_id', userData.user.id)
+          .maybeSingle()
 
         if (existingBid) {
-  setAlreadyBid(true)
-  setMessage('You have already submitted a bid for this RFQ.')
+          setAlreadyBid(true)
+          setMessage('You already submitted a bid for this round.')
+        }
 
-  if (rfqData.status === 'CLOSED') {
-    if (existingBid.is_winner) {
-      setResult('WON')
-      setWinningBid({
-        price: existingBid.price,
-        transit_days: existingBid.transit_days,
-      })
-    } else {
-      setResult('LOST')
-    }
-  }
-}
-
+        rfqData.active_round = round
+        setRfq({ ...rfqData })
       } finally {
-        // ALWAYS stop loading
         setLoading(false)
       }
     }
@@ -100,67 +81,52 @@ export default function VendorRFQDetails() {
     loadRFQ()
   }, [rfqId, router])
 
-  // ---------------- UI ----------------
-
-  if (loading) {
-    return <p>Loading RFQ...</p>
-  }
-
-  if (!rfq) {
-    return <p>RFQ not found</p>
-  }
-
   const submitBid = async () => {
     const { data: userData } = await supabase.auth.getUser()
 
     const { error } = await supabase.from('bids').insert({
       rfq_id: rfqId,
+      round_id: rfq.active_round.id,
       vendor_id: userData?.user?.id,
       price: Number(price),
       transit_days: Number(transitDays),
     })
 
-    if (error) {
-      setMessage(error.message)
-    } else {
+    if (error) setMessage(error.message)
+    else {
       setAlreadyBid(true)
       setMessage('Bid submitted successfully ✅')
     }
   }
 
+  if (loading) return <p>Loading RFQ...</p>
+  if (!rfq) return <p>RFQ not found</p>
+
   return (
     <div style={{ padding: 40 }}>
-      <h1>RFQ Details</h1>
+      <h1>RFQ Details (Vendor)</h1>
 
       <p><strong>Origin:</strong> {rfq.origin}</p>
       <p><strong>Destination:</strong> {rfq.destination}</p>
-      <p><strong>Status:</strong> {rfq.status}</p>
 
       <hr />
 
-     {result === 'WON' && winningBid && (
-  <div style={{ color: 'green', fontWeight: 'bold' }}>
-    <p>🏆 Congratulations! You WON this RFQ</p>
-    <p>Winning Price: <strong>{winningBid.price}</strong></p>
-    <p>Transit Days: <strong>{winningBid.transit_days}</strong></p>
-  </div>
-)}
+      <h3>Shipping Description</h3>
+      <p
+        style={{
+          whiteSpace: 'pre-wrap',
+          background: '#f3f3f3',
+          padding: 12,
+        }}
+      >
+        {rfq.description || 'No description provided.'}
+      </p>
 
+      <hr />
 
-      {result === 'LOST' && (
-        <p style={{ color: 'red', fontWeight: 'bold' }}>
-          ❌ You did not win this RFQ
-        </p>
-      )}
-
-      {result === null && alreadyBid && (
-        <p style={{ color: 'green' }}>{message}</p>
-      )}
-
-      {result === null && !alreadyBid && rfq.status === 'LIVE' && (
+      {!alreadyBid ? (
         <>
-          <h3>Submit Your Bid</h3>
-
+          <h3>Submit Bid</h3>
           <input
             type="number"
             placeholder="Price"
@@ -168,7 +134,6 @@ export default function VendorRFQDetails() {
             onChange={(e) => setPrice(e.target.value)}
           />
           <br /><br />
-
           <input
             type="number"
             placeholder="Transit Days"
@@ -176,15 +141,15 @@ export default function VendorRFQDetails() {
             onChange={(e) => setTransitDays(e.target.value)}
           />
           <br /><br />
-
           <button onClick={submitBid}>Submit Bid</button>
         </>
+      ) : (
+        <p style={{ color: 'green' }}>{message}</p>
       )}
 
-      <br /><br />
-
+      <br />
       <button onClick={() => router.push('/dashboard/vendor')}>
-        Back to Inbox
+        Back
       </button>
     </div>
   )

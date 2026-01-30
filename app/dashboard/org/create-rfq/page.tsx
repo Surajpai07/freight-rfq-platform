@@ -1,22 +1,23 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import { useRouter } from 'next/navigation'
 
-export default function CreateRFQ() {
+export default function CreateRFQPage() {
   const router = useRouter()
 
   const [origin, setOrigin] = useState('')
   const [destination, setDestination] = useState('')
+  const [description, setDescription] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
   useEffect(() => {
-    async function checkAccess() {
+    async function checkOrg() {
       const { data: userData } = await supabase.auth.getUser()
 
-      if (!userData.user) {
+      if (!userData?.user) {
         router.push('/login')
         return
       }
@@ -32,57 +33,71 @@ export default function CreateRFQ() {
       }
     }
 
-    checkAccess()
+    checkOrg()
   }, [router])
 
-  const handleCreateRFQ = async () => {
+  const createRFQ = async () => {
     setLoading(true)
-    setError('')
+    setMessage('')
 
     const { data: userData } = await supabase.auth.getUser()
+    if (!userData?.user) return
 
-    const { error } = await supabase.from('rfqs').insert({
-      org_id: userData.user?.id,
-      origin,
-      destination,
-    })
+    const { data: rfq, error } = await supabase
+      .from('rfqs')
+      .insert({
+        org_id: userData.user.id,
+        origin,
+        destination,
+        description,
+        status: 'DRAFT',
+      })
+      .select()
+      .single()
 
     setLoading(false)
 
     if (error) {
-      setError(error.message)
+      setMessage(error.message)
     } else {
-      router.push('/dashboard/org')
+      router.push(`/dashboard/org/rfq/${rfq.id}`)
     }
   }
 
   return (
-    <div style={{ padding: 40 }}>
+    <div style={{ padding: 40, maxWidth: 600 }}>
       <h1>Create RFQ</h1>
 
-      <br />
-
+      <label>Origin</label>
       <input
-        placeholder="Origin (e.g. Shanghai)"
+        type="text"
         value={origin}
         onChange={(e) => setOrigin(e.target.value)}
+        style={{ width: '100%', marginBottom: 12 }}
       />
-      <br /><br />
 
+      <label>Destination</label>
       <input
-        placeholder="Destination (e.g. Mumbai)"
+        type="text"
         value={destination}
         onChange={(e) => setDestination(e.target.value)}
+        style={{ width: '100%', marginBottom: 12 }}
       />
-      <br /><br />
 
-      <button onClick={handleCreateRFQ} disabled={loading}>
+      <label>Shipping Description / Instructions</label>
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={5}
+        placeholder="Describe cargo details, packaging, special handling, timelines, etc."
+        style={{ width: '100%', marginBottom: 20 }}
+      />
+
+      <button onClick={createRFQ} disabled={loading}>
         {loading ? 'Creating...' : 'Create RFQ'}
       </button>
 
-      <br /><br />
-
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {message && <p style={{ marginTop: 10 }}>{message}</p>}
     </div>
   )
 }
